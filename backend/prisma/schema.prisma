@@ -1,0 +1,578 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============== USER ==============
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  username          String    @unique
+  displayName       String?
+  avatar            String?
+  banner            String?
+  bio               String?
+  status            String    @default("online") // online, idle, dnd, invisible
+  statusText        String?
+  statusEmoji       String?
+  
+  // Preferences
+  theme             String    @default("dark")
+  locale            String    @default("en")
+  notificationMode  String    @default("all") // all, mentions, none
+  compactMode       Boolean   @default(false)
+  
+  // Account
+  password          String
+  emailVerified     Boolean   @default(false)
+  verificationToken String?
+  
+  // Profile
+  badges            String[]  @default([])
+  level             Int       @default(1)
+  xp                Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  lastSeenAt        DateTime  @default(now())
+  
+  // Relations
+  servers           ServerMember[]
+  channels          ChannelMember[]
+  messages          Message[]
+  threads           Thread[]
+  reactions         Reaction[]
+  following         User[]    @relation("Following")
+  followers         User[]    @relation("Following")
+  pinnedMessages    Message[] @relation("PinnedBy")
+  bots              Bot[]     @relation("BotOwner")
+  botInvites        BotInvite[]
+  warnings          Warn[]
+  moderatorOf       Server[]  @relation("Moderators")
+  serverNicknames   ServerNickname[]
+  activities        Activity[]
+  blockedUsers      User[]    @relation("Blocked")
+  blockedBy         User[]    @relation("Blocked")
+  
+  @@index([email])
+  @@index([username])
+  @@index([createdAt])
+}
+
+model ServerNickname {
+  id        String   @id @default(cuid())
+  userId    String
+  serverId  String
+  nickname  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, serverId])
+  @@index([userId])
+  @@index([serverId])
+}
+
+// ============== SERVER ==============
+model Server {
+  id                String    @id @default(cuid())
+  name              String
+  description       String?
+  icon              String?
+  banner            String?
+  ownerId           String
+  owner             User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  
+  // Settings
+  isPublic          Boolean   @default(false)
+  vanityUrl         String?   @unique
+  category          String    @default("general")
+  tags              String[]  @default([])
+  language          String    @default("en")
+  
+  // Moderation
+  verificationLevel String    @default("none") // none, low, medium, high, very_high
+  defaultRole       String?   @relation("DefaultRole", fields: [defaultRoleId], references: [id])
+  defaultRoleId     String?
+  
+  // Stats
+  memberCount       Int       @default(0)
+  messageCount      Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // Relations
+  channels          Channel[]
+  members           ServerMember[]
+  roles             Role[]
+  invites           ServerInvite[]
+  bans              Ban[]
+  emojis            CustomEmoji[]
+  moderators        User[]    @relation("Moderators")
+  nicknameSettings  ServerNickname[]
+  automoderations   AutoModeration[]
+  auditLogs         AuditLog[]
+  widgets           Widget[]
+  
+  @@index([ownerId])
+  @@index([isPublic])
+  @@index([category])
+  @@index([createdAt])
+}
+
+model Role {
+  id        String    @id @default(cuid())
+  name      String
+  color     String    @default("#000000")
+  position  Int       @default(0)
+  serverId  String
+  
+  // Permissions
+  permissions String[] @default([])
+  
+  // Settings
+  isMentionable Boolean @default(true)
+  isHoisted     Boolean @default(false)
+  
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  server    Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  members   ServerMember[] @relation("RoleMembers")
+  defaultFor Server[] @relation("DefaultRole")
+  
+  @@index([serverId])
+  @@index([position])
+}
+
+model ServerMember {
+  id        String    @id @default(cuid())
+  userId    String
+  serverId  String
+  
+  // Roles
+  roles     Role[]    @relation("RoleMembers")
+  
+  // Status
+  joinedAt  DateTime  @default(now())
+  nickname  String?
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server    Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, serverId])
+  @@index([userId])
+  @@index([serverId])
+}
+
+// ============== CHANNEL ==============
+model Channel {
+  id                String    @id @default(cuid())
+  name              String
+  description       String?
+  type              String    @default("text") // text, voice, thread, forum
+  position          Int       @default(0)
+  serverId          String?
+  parentId          String?   // For nested channels
+  
+  // Settings
+  isPrivate         Boolean   @default(false)
+  isReadOnly        Boolean   @default(false)
+  isAnnouncement    Boolean   @default(false)
+  slowMode          Int       @default(0) // seconds between messages
+  maxMessages       Int?      // auto-delete after N messages
+  expiresAt         DateTime? // temporary channel auto-delete
+  
+  // Access
+  allowedRoles      String[]  @default([])
+  deniedRoles       String[]  @default([])
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // Relations
+  server            Server?   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  parent            Channel?  @relation("ChannelHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children          Channel[] @relation("ChannelHierarchy")
+  members           ChannelMember[]
+  messages          Message[]
+  threads           Thread[]
+  invites           ChannelInvite[]
+  
+  @@index([serverId])
+  @@index([parentId])
+  @@index([createdAt])
+}
+
+model ChannelMember {
+  id        String    @id @default(cuid())
+  userId    String
+  channelId String
+  
+  // Settings
+  muted     Boolean   @default(false)
+  archived  Boolean   @default(false)
+  
+  joinedAt  DateTime  @default(now())
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, channelId])
+  @@index([userId])
+  @@index([channelId])
+}
+
+// ============== MESSAGE ==============
+model Message {
+  id          String    @id @default(cuid())
+  content     String
+  authorId    String
+  channelId   String
+  threadId    String?   // If null, it's a root message
+  
+  // Editing
+  editedAt    DateTime?
+  editHistory MessageEdit[]
+  
+  // Pinning
+  pinnedAt    DateTime?
+  pinnedBy    User?     @relation("PinnedBy", fields: [pinnedById], references: [id])
+  pinnedById  String?
+  
+  // Metadata
+  attachments Attachment[]
+  reactions   Reaction[]
+  mentions    String[]  @default([]) // User IDs
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  author      User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  thread      Thread?   @relation("ThreadMessages", fields: [threadId], references: [id], onDelete: Cascade)
+  
+  @@index([channelId])
+  @@index([threadId])
+  @@index([authorId])
+  @@index([createdAt])
+}
+
+model MessageEdit {
+  id        String    @id @default(cuid())
+  messageId String
+  content   String
+  createdAt DateTime  @default(now())
+  
+  message   Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  @@index([messageId])
+}
+
+model Attachment {
+  id        String    @id @default(cuid())
+  messageId String
+  url       String
+  filename  String
+  size      Int
+  type      String    // image, video, document, etc.
+  createdAt DateTime  @default(now())
+  
+  message   Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  @@index([messageId])
+}
+
+model Reaction {
+  id        String    @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime  @default(now())
+  
+  message   Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@index([userId])
+}
+
+// ============== THREAD ==============
+model Thread {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  channelId   String
+  creatorId   String
+  archived    Boolean   @default(false)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  creator     User      @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  messages    Message[] @relation("ThreadMessages")
+  
+  @@index([channelId])
+  @@index([creatorId])
+  @@index([archived])
+}
+
+// ============== BOT ==============
+model Bot {
+  id            String    @id @default(cuid())
+  name          String
+  avatar        String?
+  description   String?
+  ownerId       String
+  token         String    @unique
+  
+  // Settings
+  prefix        String    @default("!")
+  isPublic      Boolean   @default(false)
+  isVerified    Boolean   @default(false)
+  
+  // Permissions
+  requiredPermissions String[] @default([])
+  
+  // Stats
+  inviteCount   Int       @default(0)
+  serverCount   Int       @default(0)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  owner         User      @relation("BotOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  commands      BotCommand[]
+  invites       BotInvite[]
+  automations   BotAutomation[]
+  
+  @@index([ownerId])
+  @@index([isPublic])
+}
+
+model BotCommand {
+  id          String    @id @default(cuid())
+  botId       String
+  name        String
+  description String
+  
+  // Trigger
+  trigger     String    // prefix + name, or custom trigger
+  triggerType String    @default("command") // command, mention, keyword, reaction
+  
+  // Response
+  response    String
+  responseType String   @default("text") // text, embed, custom
+  
+  // Settings
+  enabled     Boolean   @default(true)
+  cooldown    Int       @default(0) // seconds
+  requiredRole String?
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  bot         Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  @@index([botId])
+}
+
+model BotAutomation {
+  id            String    @id @default(cuid())
+  botId         String
+  name          String
+  description   String?
+  
+  // Trigger
+  event         String    // member_join, member_leave, message, reaction, etc.
+  condition     String?   // JSON filter
+  
+  // Action
+  action        String    // send_message, add_role, send_dm, etc.
+  actionData    String    // JSON action payload
+  
+  enabled       Boolean   @default(true)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  bot           Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  @@index([botId])
+  @@index([event])
+}
+
+model BotInvite {
+  id        String    @id @default(cuid())
+  botId     String
+  userId    String
+  code      String    @unique
+  
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  
+  bot       Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([botId])
+  @@index([userId])
+}
+
+// ============== MODERATION ==============
+model AutoModeration {
+  id            String    @id @default(cuid())
+  serverId      String
+  
+  // Settings
+  name          String
+  trigger       String    // spam, profanity, invite, external_link, etc.
+  triggerConfig String?   // JSON config
+  
+  // Action
+  action        String    // warn, mute, kick, ban
+  actionDuration Int?     // milliseconds (for mute/timeout)
+  
+  enabled       Boolean   @default(true)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  server        Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  @@index([serverId])
+}
+
+model Warn {
+  id          String    @id @default(cuid())
+  userId      String
+  serverId    String?
+  reason      String
+  moderatorId String?
+  
+  createdAt   DateTime  @default(now())
+  
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Ban {
+  id          String    @id @default(cuid())
+  userId      String
+  serverId    String
+  reason      String?
+  moderatorId String?
+  
+  expiresAt   DateTime? // permanent if null
+  createdAt   DateTime  @default(now())
+  
+  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  @@index([serverId])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  serverId    String
+  action      String    // message_delete, member_ban, role_create, etc.
+  userId      String?   // who did the action
+  targetId    String?   // what was affected
+  changes     String?   // JSON of changes
+  reason      String?
+  
+  createdAt   DateTime  @default(now())
+  
+  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  @@index([serverId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ============== INVITES ==============
+model ServerInvite {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  serverId    String
+  createdBy   String
+  
+  expiresAt   DateTime?
+  maxUses     Int?
+  uses        Int       @default(0)
+  
+  createdAt   DateTime  @default(now())
+  
+  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  @@index([code])
+  @@index([serverId])
+}
+
+model ChannelInvite {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  channelId   String
+  createdBy   String
+  
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  
+  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  
+  @@index([code])
+  @@index([channelId])
+}
+
+// ============== EMOJI ==============
+model CustomEmoji {
+  id        String    @id @default(cuid())
+  name      String
+  url       String
+  serverId  String
+  
+  createdAt DateTime  @default(now())
+  
+  server    Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  @@index([serverId])
+}
+
+// ============== ACTIVITY & SOCIAL ==============
+model Activity {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String    // message, join_server, follow_user, etc.
+  metadata  String?   // JSON with context
+  
+  createdAt DateTime  @default(now())
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ============== WIDGETS & EMBEDS ==============
+model Widget {
+  id        String    @id @default(cuid())
+  serverId  String
+  type      String    // welcome, rules, member_counter, etc.
+  data      String    // JSON config
+  position  Int       @default(0)
+  
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  server    Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  @@index([serverId])
+}
